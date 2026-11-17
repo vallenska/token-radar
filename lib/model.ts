@@ -303,7 +303,7 @@ export function chooseProtocols(snapshot: Snapshot): SnapshotProtocol[] {
   // future snapshot's watchlist shrinks and its below-floor field thins out.
   if (chosen.size < 100) {
     const fallback = snapshot.protocols
-      .filter((protocol) => recordsNoToken(protocol) && !chosen.has(protocol.slug))
+      .filter((protocol) => isLaunchCandidate(protocol) && !chosen.has(protocol.slug))
       .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
     for (const protocol of fallback) {
       chosen.set(protocol.slug, protocol);
@@ -373,6 +373,12 @@ function actionFor(category: string | null, name: string, capital: number, chain
   }
   if (/governance/.test(kind)) {
     return `Deposit $${capital} of the eligible asset into ${name} on ${chain}, and vote once in a live governance round.`;
+  }
+  if (/btc|bitcoin/.test(kind)) {
+    return `Mint or deposit $${capital} of BTC into ${name} on ${chain}, confirm the custodian or bridge, and keep the receipt in the same wallet.`;
+  }
+  if (/card|issuer/.test(kind)) {
+    return `Open a ${name} account on ${chain}, load it with $${capital} of USDC, and make one card payment so the activity is on record.`;
   }
   return `Deposit $${capital} of USDC into ${name} on ${chain}, and keep the position open through the holding window.`;
 }
@@ -637,16 +643,18 @@ export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null
   }
   const missing = snapshot.watchlist.filter((slug) => !slugs.has(slug));
   if (missing.length > 0) return `the board misses ${missing.length} watchlist slugs: ${missing.slice(0, 5).join(', ')}`;
-  const ranks = board.map((row) => row.rank).sort((a, b) => a - b);
-  for (let index = 0; index < ranks.length; index += 1) {
-    if (ranks[index] !== index + 1) return `rank ${index + 1} is ${ranks[index]}`;
+  const valueByRank = new Map<number, number>();
+  for (const row of board) {
+    if (valueByRank.has(row.rank)) return `rank ${row.rank} appears twice`;
+    valueByRank.set(row.rank, row.implied_value_usd);
   }
-  for (let index = 1; index < board.length; index += 1) {
-    if (board[index]!.implied_value_usd > board[index - 1]!.implied_value_usd) {
-      return `row ${index + 1} outranks row ${index} on implied value`;
+  for (let rank = 1; rank <= board.length; rank += 1) {
+    if (!valueByRank.has(rank)) return `rank ${rank} is missing`;
+    if (rank > 1 && valueByRank.get(rank)! > valueByRank.get(rank - 1)!) {
+      return `rank ${rank} outranks rank ${rank - 1} on implied value`;
     }
   }
-  if (board.length >= 2 && board[0]!.implied_value_usd === board[board.length - 1]!.implied_value_usd) {
+  if (board.length >= 2 && valueByRank.get(1) === valueByRank.get(board.length)) {
     return `all ${board.length} rows share the same implied value`;
   }
   return null;
